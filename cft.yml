@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Create AWS Resources"
+
+Parameters:
+    ExecutionClass:
+        Type: String
+        Description: "Execution Class"
+        Default: FLEX 
+    GlueVersion:
+        Type: Float
+        Description: "Glue Version"
+        Default: 4.0 
+    MaxRetries:
+        Type: Number
+        Description: "Number of Max. Retries of Glue Job"
+        Default: 0 
+    NumberOfWorkers:
+        Type: Number
+        Description: "Number of Glue Job workers"
+        Default: 6 
+    LabRole:
+        Type: String
+        Description: "LabRole"
+        Default: arn:aws:iam::467280971091:role/LabRole 
+    Timeout:
+        Type: Number
+        Description: "Timeout for Glue Job"
+        Default: 40
+    WorkerType:
+        Type: String
+        Description: "Type of Glue job Worker"
+        Default: G.1X
+    
+Resources:
+
+    MyS3Bucket:
+        Type: AWS::S3::Bucket
+        DeletionPolicy: Delete
+        Properties:
+            BucketName: datalakegrp04
+
+    MyS3Bucket1:
+        Type: AWS::S3::Bucket
+        DeletionPolicy: Delete
+        Properties:
+            BucketName: outputgrp04
+        
+        
+    GlueDatabase:
+        Type: AWS::Glue::Database
+        Properties:
+            CatalogId: !Ref AWS::AccountId
+            DatabaseInput:
+                Name: gitdatabase 
+                   
+
+    WorkflowJob:
+        Type: AWS::Glue::Workflow
+        Properties:
+            Description: Create workflow
+            MaxConcurrentRuns: 1
+            Name: jobworkflow        
+    
+    GlueJobImport:
+        Type: AWS::Glue::Job
+        DependsOn: MyS3Bucket
+        Properties:
+            Name: data-ingestion
+            Description: Ingests data from s3 and writes it as a parquet file to the data lake
+            ExecutionClass: !Ref ExecutionClass
+            GlueVersion: !Ref GlueVersion
+            MaxRetries: !Ref MaxRetries
+            NumberOfWorkers: !Ref NumberOfWorkers
+            Role: !Ref LabRole
+            Timeout: !Ref Timeout
+            WorkerType: !Ref WorkerType
+            Command:
+                Name: glueetl
+                ScriptLocation: s3://github-scrpits/Datawarehouse_Script.py
+
+    
+    GlueCrawler:
+        Type: AWS::Glue::Crawler
+        Properties:
+            Name: CrawlingData
+            DatabaseName:  gitdatabase
+            Targets:
+                S3Targets:
+                    - Path: s3://datalakegrp04/datawarehouse/
+            Role: !Ref LabRole
+    
+  
+    WorkflowStartTrigger:
+          Type: AWS::Glue::Trigger
+          Properties:
+              Name: StartTrigger
+              Type: ON_DEMAND
+              Description: Trigger for starting the workflow
+              Actions:
+                - JobName: !Ref GlueJobImport
+              WorkflowName:  !Ref WorkflowJob
+
+    CrawlerJobTrigger:
+        Type: AWS::Glue::Trigger
+        Properties:
+            Name: Jobsuccesful
+            Type: CONDITIONAL
+            StartOnCreation: TRUE
+            Description: Trigger to start the crawler
+            Actions:
+              - CrawlerName :  crawlingdata
+            Predicate: 
+              Conditions:
+                - LogicalOperator: EQUALS
+                  JobName: !Ref GlueJobImport
+                  State: SUCCEEDED
+            WorkflowName: !Ref WorkflowJob  
+            
+            
+    MyAthenaWorkGroup:
+        Type: AWS::Athena::WorkGroup
+        Properties:
+            Name: gitworkgrp
+            Description: workgroup for Athena
+            State: ENABLED
+            WorkGroupConfiguration:
+                BytesScannedCutoffPerQuery: 200000000
+                EnforceWorkGroupConfiguration: false
+                PublishCloudWatchMetricsEnabled: true
+                RequesterPaysEnabled: true
+                ResultConfiguration:
+                    OutputLocation: s3://outputgrp04/Query/    
+
